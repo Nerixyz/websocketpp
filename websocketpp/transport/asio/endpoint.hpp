@@ -86,7 +86,7 @@ public:
     /// Type of timer handle
     typedef lib::shared_ptr<lib::asio::steady_timer> timer_ptr;
     /// Type of a shared pointer to an io_service work object
-    typedef lib::shared_ptr<lib::asio::io_service::work> work_ptr;
+    typedef lib::shared_ptr<lib::asio::executor_work_guard<lib::asio::io_service::executor_type>> work_ptr;
 
     /// Type of socket pre-bind handler
     typedef lib::function<lib::error_code(acceptor_ptr)> tcp_pre_bind_handler;
@@ -95,7 +95,7 @@ public:
     explicit endpoint()
       : m_io_service(NULL)
       , m_external_io_service(false)
-      , m_listen_backlog(lib::asio::socket_base::max_connections)
+      , m_listen_backlog(lib::asio::socket_base::max_listen_connections)
       , m_reuse_addr(false)
       , m_state(UNINITIALIZED)
     {
@@ -135,7 +135,7 @@ public:
       , m_io_service(src.m_io_service)
       , m_external_io_service(src.m_external_io_service)
       , m_acceptor(src.m_acceptor)
-      , m_listen_backlog(lib::asio::socket_base::max_connections)
+      , m_listen_backlog(lib::asio::socket_base::max_listen_connections)
       , m_reuse_addr(src.m_reuse_addr)
       , m_elog(src.m_elog)
       , m_alog(src.m_alog)
@@ -518,17 +518,17 @@ public:
         lib::error_code & ec)
     {
         using lib::asio::ip::tcp;
+        using lib::asio::ip::basic_resolver_query;
         tcp::resolver r(*m_io_service);
-        tcp::resolver::query query(host, service);
-        tcp::resolver::iterator endpoint_iterator = r.resolve(query);
-        tcp::resolver::iterator end;
-        if (endpoint_iterator == end) {
+        basic_resolver_query<tcp> query(host, service);
+        tcp::resolver::results_type endpoints = r.resolve(host, service);
+        if (endpoints.empty()) {
             m_elog->write(log::elevel::library,
                 "asio::listen could not resolve the supplied host or service");
             ec = make_error_code(error::invalid_host_service);
             return;
         }
-        listen(*endpoint_iterator,ec);
+        listen(endpoints.begin()->endpoint(), ec);
     }
 
     /// Stop listening (exception free)
@@ -693,7 +693,7 @@ public:
 
     /// wraps the reset method of the internal io_service object
     void reset() {
-        m_io_service->reset();
+        m_io_service->restart();
     }
 
     /// wraps the stopped method of the internal io_service object
@@ -714,7 +714,7 @@ public:
      * @since 0.3.0
      */
     void start_perpetual() {
-        m_work.reset(new lib::asio::io_service::work(*m_io_service));
+        m_work.reset(new lib::asio::executor_work_guard<lib::asio::io_context::executor_type>(m_io_service->get_executor()));
     }
 
     /// Clears the endpoint's perpetual flag, allowing it to exit when empty
@@ -912,8 +912,6 @@ protected:
             port = pu->get_port_str();
         }
 
-        tcp::resolver::query query(host,port);
-
         if (m_alog->static_test(log::alevel::devel)) {
             m_alog->write(log::alevel::devel,
                 "starting async DNS resolve for "+host+":"+port);
@@ -934,7 +932,8 @@ protected:
 
         if (config::enable_multithreading) {
             m_resolver->async_resolve(
-                query,
+                host,
+                port,
                 tcon->get_strand()->wrap(lib::bind(
                     &type::handle_resolve,
                     this,
@@ -947,7 +946,8 @@ protected:
             );
         } else {
             m_resolver->async_resolve(
-                query,
+                host,
+                port,
                 lib::bind(
                     &type::handle_resolve,
                     this,
@@ -995,10 +995,10 @@ protected:
 
     void handle_resolve(transport_con_ptr tcon, timer_ptr dns_timer,
         connect_handler callback, lib::asio::error_code const & ec,
-        lib::asio::ip::tcp::resolver::iterator iterator)
+        lib::asio::ip::basic_resolver<lib::asio::ip::tcp>::results_type iterator)
     {
         if (ec == lib::asio::error::operation_aborted ||
-            lib::asio::is_neg(dns_timer->expires_from_now()))
+            lib::asio::is_neg(lib::asio::timer_expiry(*dns_timer)))
         {
             m_alog->write(log::alevel::devel,"async_resolve cancelled");
             return;
@@ -1016,9 +1016,8 @@ protected:
             std::stringstream s;
             s << "Async DNS resolve successful. Results: ";
 
-            lib::asio::ip::tcp::resolver::iterator it, end;
-            for (it = iterator; it != end; ++it) {
-                s << (*it).endpoint() << " ";
+            for (const auto &result : iterator) {
+                s << result.endpoint() << " ";
             }
 
             m_alog->write(log::alevel::devel,s.str());
@@ -1106,7 +1105,7 @@ protected:
         connect_handler callback, lib::asio::error_code const & ec)
     {
         if (ec == lib::asio::error::operation_aborted ||
-            lib::asio::is_neg(con_timer->expires_from_now()))
+            lib::asio::is_neg(lib::asio::timer_expiry(*con_timer)))
         {
             m_alog->write(log::alevel::devel,"async_connect cancelled");
             return;

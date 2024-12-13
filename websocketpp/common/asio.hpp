@@ -64,6 +64,13 @@
     
     #include <boost/asio.hpp>
     #include <boost/system/error_code.hpp>
+
+    #if (BOOST_VERSION / 100000) == 1 &&  ((BOOST_VERSION / 100) % 1000) >= 87
+        /// Typedef for backwards compatibility.
+        namespace boost::asio {
+            typedef io_context io_service;
+        }
+    #endif
 #endif
 
 namespace websocketpp {
@@ -126,6 +133,17 @@ namespace lib {
             }
             inline boost::posix_time::time_duration milliseconds(long duration) {
                 return boost::posix_time::milliseconds(duration);
+            }
+        #endif
+
+        #if (BOOST_VERSION/100000) == 1 && ((BOOST_VERSION/100)%1000) >= 66
+            inline steady_timer::duration timer_expiry(const steady_timer &timer) {
+                typedef detail::chrono_time_traits<steady_timer::clock_type, steady_timer::traits_type> traits;
+                return traits::subtract(timer.expiry(), traits::now());
+            }
+        #else
+            inline steady_timer::duration timer_expiry(const steady_timer &timer) {
+                return timer.expires_from_now();
             }
         #endif
         

@@ -579,7 +579,7 @@ protected:
         lib::error_code const & ec)
     {
         if (ec == transport::error::operation_aborted ||
-            (post_timer && lib::asio::is_neg(post_timer->expires_from_now())))
+            (post_timer && lib::asio::is_neg(lib::asio::timer_expiry(*post_timer))))
         {
             m_alog->write(log::alevel::devel,"post_init cancelled");
             return;
@@ -685,7 +685,7 @@ protected:
         // Whatever aborted it will be issuing the callback so we are safe to
         // return
         if (ec == lib::asio::error::operation_aborted ||
-            lib::asio::is_neg(m_proxy_data->timer->expires_from_now()))
+            lib::asio::is_neg(lib::asio::timer_expiry(*m_proxy_data->timer)))
         {
             m_elog->write(log::elevel::devel,"write operation aborted");
             return;
@@ -756,7 +756,7 @@ protected:
         // Whatever aborted it will be issuing the callback so we are safe to
         // return
         if (ec == lib::asio::error::operation_aborted ||
-            lib::asio::is_neg(m_proxy_data->timer->expires_from_now()))
+            lib::asio::is_neg(lib::asio::timer_expiry(*m_proxy_data->timer)))
         {
             m_elog->write(log::elevel::devel,"read operation aborted");
             return;
@@ -1030,18 +1030,18 @@ protected:
      */
     lib::error_code interrupt(interrupt_handler handler) {
         if (config::enable_multithreading) {
-            m_io_service->post(m_strand->wrap(handler));
+            lib::asio::post(*m_io_service, m_strand->wrap(handler));
         } else {
-            m_io_service->post(handler);
+            lib::asio::post(*m_io_service, handler);
         }
         return lib::error_code();
     }
 
     lib::error_code dispatch(dispatch_handler handler) {
         if (config::enable_multithreading) {
-            m_io_service->post(m_strand->wrap(handler));
+            lib::asio::post(*m_io_service, m_strand->wrap(handler));
         } else {
-            m_io_service->post(handler);
+            lib::asio::post(*m_io_service, handler);
         }
         return lib::error_code();
     }
@@ -1113,7 +1113,7 @@ protected:
         callback, lib::asio::error_code const & ec)
     {
         if (ec == lib::asio::error::operation_aborted ||
-            lib::asio::is_neg(shutdown_timer->expires_from_now()))
+            lib::asio::is_neg(lib::asio::timer_expiry(*shutdown_timer)))
         {
             m_alog->write(log::alevel::devel,"async_shutdown cancelled");
             return;
